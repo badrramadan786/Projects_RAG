@@ -877,39 +877,74 @@ async function deleteFile(pool, filename) {
     } catch(e) { showToast('Delete failed','error'); }
 }
 
-// ── Sync / Rebuild (per pool) ──────────────────
+// ── Sync / Rebuild (per pool) — background with polling ──────────
+async function pollTaskStatus(pool, poolLabel, btnSyncId, btnRebuildId) {
+    const poll = async () => {
+        try {
+            const res = await fetch(`/api/projects/${currentProject}/${pool}/task_status`);
+            const task = await res.json();
+            if (task.status === 'running') {
+                showSpinner(`${poolLabel}: ${task.progress || 'Processing...'}`);
+                setTimeout(poll, 2000);
+            } else if (task.status === 'done') {
+                hideSpinner();
+                const r = task.result || {};
+                const logMsg = r.log?.length ? '\n' + r.log.join('\n') : 'No changes detected.';
+                showToast(`${poolLabel} complete — ${r.files||0} file(s), ${r.chunks||0} chunk(s). ${logMsg}`, 'success');
+                refreshWorkspace();
+                document.getElementById(btnSyncId).disabled = false;
+                document.getElementById(btnRebuildId).disabled = false;
+            } else if (task.status === 'error') {
+                hideSpinner();
+                showToast(`${poolLabel} failed: ${task.progress}`, 'error');
+                document.getElementById(btnSyncId).disabled = false;
+                document.getElementById(btnRebuildId).disabled = false;
+            } else {
+                hideSpinner();
+                document.getElementById(btnSyncId).disabled = false;
+                document.getElementById(btnRebuildId).disabled = false;
+            }
+        } catch(e) {
+            hideSpinner();
+            showToast('Status check failed: '+e.message, 'error');
+            document.getElementById(btnSyncId).disabled = false;
+            document.getElementById(btnRebuildId).disabled = false;
+        }
+    };
+    setTimeout(poll, 1500);
+}
+
 async function doSync(pool) {
     if (!currentProject) return;
     const poolLabel = pool === 'main' ? 'Main Documents' : 'Clarifications';
-    const btnId = pool === 'main' ? 'btn-sync-main' : 'btn-sync-clar';
-    showSpinner(`Syncing ${poolLabel}...`);
-    document.getElementById(btnId).disabled = true;
+    const btnSyncId = pool === 'main' ? 'btn-sync-main' : 'btn-sync-clar';
+    const btnRebuildId = pool === 'main' ? 'btn-rebuild-main' : 'btn-rebuild-clar';
+    showSpinner(`Starting ${poolLabel} sync...`);
+    document.getElementById(btnSyncId).disabled = true;
+    document.getElementById(btnRebuildId).disabled = true;
     try {
         const res = await fetch(`/api/projects/${currentProject}/${pool}/sync`, {method:'POST'});
         const data = await res.json();
-        hideSpinner();
-        const logMsg = data.log?.length ? '\n' + data.log.join('\n') : 'No changes detected.';
-        showToast(`${poolLabel} sync complete \u2014 ${data.files} file(s), ${data.chunks} chunk(s). ${logMsg}`,'success');
-        refreshWorkspace();
-    } catch(e) { hideSpinner(); showToast('Sync failed: '+e.message,'error'); }
-    document.getElementById(btnId).disabled = false;
+        if (data.error) { hideSpinner(); showToast(data.error, 'error'); document.getElementById(btnSyncId).disabled = false; document.getElementById(btnRebuildId).disabled = false; return; }
+        pollTaskStatus(pool, poolLabel, btnSyncId, btnRebuildId);
+    } catch(e) { hideSpinner(); showToast('Sync failed: '+e.message,'error'); document.getElementById(btnSyncId).disabled = false; document.getElementById(btnRebuildId).disabled = false; }
 }
 
 async function doRebuild(pool) {
     if (!currentProject) return;
     const poolLabel = pool === 'main' ? 'Main Documents' : 'Clarifications';
     if (!confirm(`Delete all ${poolLabel} embeddings and rebuild from scratch?`)) return;
-    const btnId = pool === 'main' ? 'btn-rebuild-main' : 'btn-rebuild-clar';
-    showSpinner(`Rebuilding ${poolLabel} index...`);
-    document.getElementById(btnId).disabled = true;
+    const btnSyncId = pool === 'main' ? 'btn-sync-main' : 'btn-sync-clar';
+    const btnRebuildId = pool === 'main' ? 'btn-rebuild-main' : 'btn-rebuild-clar';
+    showSpinner(`Starting ${poolLabel} rebuild...`);
+    document.getElementById(btnSyncId).disabled = true;
+    document.getElementById(btnRebuildId).disabled = true;
     try {
         const res = await fetch(`/api/projects/${currentProject}/${pool}/rebuild`, {method:'POST'});
         const data = await res.json();
-        hideSpinner();
-        showToast(`${poolLabel} rebuild complete \u2014 ${data.files} file(s), ${data.chunks} chunk(s).`,'success');
-        refreshWorkspace();
-    } catch(e) { hideSpinner(); showToast('Rebuild failed: '+e.message,'error'); }
-    document.getElementById(btnId).disabled = false;
+        if (data.error) { hideSpinner(); showToast(data.error, 'error'); document.getElementById(btnSyncId).disabled = false; document.getElementById(btnRebuildId).disabled = false; return; }
+        pollTaskStatus(pool, poolLabel, btnSyncId, btnRebuildId);
+    } catch(e) { hideSpinner(); showToast('Rebuild failed: '+e.message,'error'); document.getElementById(btnSyncId).disabled = false; document.getElementById(btnRebuildId).disabled = false; }
 }
 
 // ── Chat (per pool) ────────────────────────────
@@ -984,4 +1019,3 @@ loadProjects();
 </script>
 </body>
 </html>
-
