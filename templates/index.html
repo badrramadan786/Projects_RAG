@@ -1,1 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project RAG Pro</title>
+    <style>
+        :root {
+            --bg: #0c0e14;
+            --surface: #13161f;
+            --surface2: #1a1e2a;
+            --surface3: #222738;
+            --border: #2a2f42;
+            --border-light: #353b52;
+            --text: #e8eaf0;
+            --text-dim: #7c829a;
+            --text-muted: #555b73;
+            --accent: #5b8def;
+            --accent-hover: #4a7de0;
+            --accent-bg: rgba(91,141,239,0.1);
+            --green: #3dd68c;
+            --green-bg: rgba(61,214,140,0.1);
+            --red: #ef5b5b;
+            --red-bg: rgba(239,91,91,0.1);
+            --orange: #f0a050;
+            --orange-bg: rgba(240,160,80,0.1);
+            --purple: #a78bfa;
+            --purple-bg: rgba(167,139,250,0.1);
+            --user-bg: #1e2d4d;
+            --bot-bg: #181c28;
+            --radius: 10px;
+            --radius-lg: 14px;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg); color: var(--text);
+            height: 100vh; overflow: hidden;
+        }
+
+        /* ── Views ─────────────────────────────── */
+        .view { display:none; height:100vh; }
+        .view.active { display:flex; }
+
+        /* ══════════════════════════════════════════
+           PROJECT DASHBOARD
+           ══════════════════════════════════════════ */
+        #dashboard { flex-direction:column; }
+
+        .dash-header {
+            padding: 28px 40px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .dash-header .logo { display:flex; align-items:center; gap:12px; }
+        .dash-header .logo h1 { font-size:22px; font-weight:700; letter-spacing:-0.5px; }
+        .dash-header .logo .badge {
+            font-size:10px; padding:3px 8px; background:var(--accent-bg);
+            color:var(--accent); border-radius:20px; font-weight:600;
+        }
+        .dash-header .logo .badge-purple {
+            font-size:10px; padding:3px 8px; background:var(--purple-bg);
+            color:var(--purple); border-radius:20px; font-weight:600;
+        }
+
+        .dash-body { flex:1; overflow-y:auto; padding:32px 40px; }
+
+        .section-title {
+            font-size:13px; text-transform:uppercase; letter-spacing:1.2px;
+            color:var(--text-dim); margin-bottom:16px; font-weight:600;
+        }
+
+        /* ── New project form ────────────────────── */
+        .new-project-card {
+            background: var(--surface); border:1px solid var(--border);
+            border-radius: var(--radius-lg); padding:24px; margin-bottom:32px;
+        }
+        .new-project-card .form-row {
+            display:flex; gap:12px; align-items:flex-end;
+        }
+        .form-group { flex:1; }
+        .form-group label {
+            display:block; font-size:12px; color:var(--text-dim);
+            margin-bottom:6px; font-weight:500;
+        }
+        .form-group input {
+            width:100%; padding:10px 14px; background:var(--surface2);
+            border:1px solid var(--border); border-radius:var(--radius);
+            color:var(--text); font-size:14px; outline:none;
+            transition: border-color 0.15s;
+        }
+        .form-group input:focus { border-color:var(--accent); }
+        .form-group input::placeholder { color:var(--text-muted); }
+
+        /* ── Project grid ────────────────────────── */
+        .project-grid {
+            display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));
+            gap:16px;
+        }
+        .project-card {
+            background:var(--surface); border:1px solid var(--border);
+            border-radius:var(--radius-lg); padding:20px; cursor:pointer;
+            transition: all 0.2s; position:relative;
+        }
+        .project-card:hover {
+            border-color:var(--accent); transform:translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        .project-card .p-name { font-size:16px; font-weight:600; margin-bottom:4px; }
+        .project-card .p-desc {
+            font-size:13px; color:var(--text-dim); margin-bottom:14px;
+            display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+        }
+        .project-card .p-stats-group { margin-bottom:4px; }
+        .project-card .p-stats {
+            display:flex; gap:16px; font-size:12px; color:var(--text-dim); margin-bottom:4px;
+        }
+        .project-card .p-stats .stat {
+            display:flex; align-items:center; gap:4px;
+        }
+        .project-card .p-stats .stat .num { color:var(--text); font-weight:600; }
+        .project-card .p-stats .pool-label {
+            font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px;
+            padding:1px 6px; border-radius:4px; margin-right:4px;
+        }
+        .project-card .p-stats .pool-label.main-label { background:var(--accent-bg); color:var(--accent); }
+        .project-card .p-stats .pool-label.clar-label { background:var(--purple-bg); color:var(--purple); }
+        .project-card .p-delete {
+            position:absolute; top:12px; right:12px;
+            background:none; border:none; color:var(--text-muted);
+            cursor:pointer; font-size:16px; padding:4px 8px; border-radius:6px;
+            opacity:0; transition: all 0.15s;
+        }
+        .project-card:hover .p-delete { opacity:1; }
+        .project-card .p-delete:hover { color:var(--red); background:var(--red-bg); }
+        .project-card .p-time {
+            font-size:11px; color:var(--text-muted); margin-top:10px;
+            padding-top:10px; border-top:1px solid var(--border);
+        }
+        .empty-state {
+            text-align:center; padding:60px 20px; color:var(--text-dim);
+        }
+        .empty-state .icon { font-size:48px; margin-bottom:12px; }
+        .empty-state h3 { font-size:18px; color:var(--text); margin-bottom:6px; }
+        .empty-state p { font-size:14px; }
+
+        /* ══════════════════════════════════════════
+           PROJECT WORKSPACE
+           ══════════════════════════════════════════ */
+        #workspace { flex-direction:row; }
+
+        /* ── Sidebar ─────────────────────────────── */
+        .sidebar {
+            width:320px; min-width:320px; background:var(--surface);
+            border-right:1px solid var(--border);
+            display:flex; flex-direction:column; height:100vh;
+        }
+        .sidebar-header {
+            padding:16px 20px; border-bottom:1px solid var(--border);
+            display:flex; align-items:center; gap:10px;
+        }
+        .back-btn {
+            background:var(--surface2); border:1px solid var(--border);
+            color:var(--text); width:32px; height:32px; border-radius:8px;
+            cursor:pointer; display:flex; align-items:center; justify-content:center;
+            font-size:14px; transition: all 0.15s;
+        }
+        .back-btn:hover { border-color:var(--accent); color:var(--accent); }
+        .sidebar-header .proj-info { flex:1; min-width:0; }
+        .sidebar-header .proj-name {
+            font-size:15px; font-weight:600; white-space:nowrap;
+            overflow:hidden; text-overflow:ellipsis;
+        }
+        .sidebar-header .proj-sub { font-size:11px; color:var(--text-dim); }
+
+        /* ── Pool tabs in sidebar ────────────────── */
+        .pool-tabs {
+            display:flex; border-bottom:1px solid var(--border);
+        }
+        .pool-tab {
+            flex:1; padding:12px 16px; text-align:center; cursor:pointer;
+            font-size:12px; font-weight:600; color:var(--text-dim);
+            border-bottom:2px solid transparent; transition:all 0.15s;
+            text-transform:uppercase; letter-spacing:0.5px;
+        }
+        .pool-tab:hover { color:var(--text); }
+        .pool-tab.active.main-tab { color:var(--accent); border-bottom-color:var(--accent); }
+        .pool-tab.active.clar-tab { color:var(--purple); border-bottom-color:var(--purple); }
+
+        .pool-panel { display:none; flex-direction:column; flex:1; overflow:hidden; }
+        .pool-panel.active { display:flex; }
+
+        .sidebar-section {
+            padding:14px 20px; border-bottom:1px solid var(--border);
+        }
+        .sidebar-section h3 {
+            font-size:10px; text-transform:uppercase; letter-spacing:1px;
+            color:var(--text-dim); margin-bottom:10px; font-weight:600;
+        }
+
+        .status-row {
+            display:flex; gap:8px; margin-bottom:10px;
+        }
+        .status-pill {
+            flex:1; background:var(--surface2); border-radius:8px; padding:8px 10px;
+            text-align:center;
+        }
+        .status-pill .label { font-size:9px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; }
+        .status-pill .value { font-size:18px; font-weight:700; margin-top:1px; }
+
+        /* ── Buttons ─────────────────────────────── */
+        .btn {
+            display:inline-flex; align-items:center; justify-content:center; gap:6px;
+            padding:8px 14px; border-radius:8px; border:none;
+            font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s;
+        }
+        .btn-primary { background:var(--accent); color:white; }
+        .btn-primary:hover { background:var(--accent-hover); }
+        .btn-purple { background:var(--purple); color:white; }
+        .btn-purple:hover { opacity:0.85; }
+        .btn-danger { background:var(--red-bg); color:var(--red); border:1px solid rgba(239,91,91,0.25); }
+        .btn-danger:hover { background:rgba(239,91,91,0.2); }
+        .btn-outline { background:transparent; color:var(--text); border:1px solid var(--border); }
+        .btn-outline:hover { background:var(--surface2); }
+        .btn:disabled { opacity:0.5; cursor:not-allowed; }
+        .btn-group { display:flex; gap:8px; }
+        .btn-group .btn { flex:1; }
+        .btn-full { width:100%; }
+
+        /* ── Upload area ─────────────────────────── */
+        .upload-area {
+            border:2px dashed var(--border); border-radius:var(--radius);
+            padding:16px; text-align:center; cursor:pointer; transition:all 0.2s;
+            margin-bottom:10px;
+        }
+        .upload-area:hover, .upload-area.dragover {
+            border-color:var(--accent); background:var(--accent-bg);
+        }
+        .upload-area .icon { font-size:22px; margin-bottom:4px; }
+        .upload-area .text { font-size:12px; color:var(--text-dim); }
+        .upload-area .text strong { color:var(--accent); }
+        .upload-area .formats { font-size:10px; color:var(--text-muted); margin-top:4px; }
+
+        /* ── File list ───────────────────────────── */
+        .file-list { flex:1; overflow-y:auto; padding:0 20px 16px; }
+        .file-item {
+            display:flex; align-items:center; padding:8px 10px;
+            background:var(--surface2); border-radius:6px; margin-bottom:4px;
+            font-size:12px; gap:8px;
+        }
+        .file-item .f-icon {
+            width:28px; height:28px; border-radius:6px; display:flex;
+            align-items:center; justify-content:center; font-size:11px; font-weight:700;
+            flex-shrink:0;
+        }
+        .file-item .f-icon.pdf { background:var(--red-bg); color:var(--red); }
+        .file-item .f-icon.xlsx, .file-item .f-icon.xls { background:var(--green-bg); color:var(--green); }
+        .file-item .f-info { flex:1; min-width:0; }
+        .file-item .f-name {
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:500;
+        }
+        .file-item .f-meta { font-size:10px; color:var(--text-dim); }
+        .file-item .f-status {
+            width:8px; height:8px; border-radius:50%; flex-shrink:0;
+        }
+        .file-item .f-status.indexed { background:var(--green); }
+        .file-item .f-status.pending { background:var(--orange); }
+        .file-item .f-del {
+            background:none; border:none; color:var(--text-muted);
+            cursor:pointer; font-size:13px; padding:2px 6px; border-radius:4px;
+            opacity:0; transition:all 0.15s;
+        }
+        .file-item:hover .f-del { opacity:1; }
+        .file-item .f-del:hover { color:var(--red); background:var(--red-bg); }
+
+        /* ── Chat area ───────────────────────────── */
+        .chat-area {
+            flex:1; display:flex; flex-direction:column; height:100vh;
+        }
+
+        /* Chat pool tabs */
+        .chat-pool-tabs {
+            display:flex; background:var(--surface); border-bottom:1px solid var(--border);
+        }
+        .chat-pool-tab {
+            flex:1; padding:14px 20px; text-align:center; cursor:pointer;
+            font-size:13px; font-weight:600; color:var(--text-dim);
+            border-bottom:3px solid transparent; transition:all 0.15s;
+            display:flex; align-items:center; justify-content:center; gap:8px;
+        }
+        .chat-pool-tab:hover { color:var(--text); }
+        .chat-pool-tab.active.main-chat-tab { color:var(--accent); border-bottom-color:var(--accent); }
+        .chat-pool-tab.active.clar-chat-tab { color:var(--purple); border-bottom-color:var(--purple); }
+        .chat-pool-tab .tab-dot {
+            width:8px; height:8px; border-radius:50%;
+        }
+        .chat-pool-tab .tab-dot.main-dot { background:var(--accent); }
+        .chat-pool-tab .tab-dot.clar-dot { background:var(--purple); }
+
+        .chat-panel { display:none; flex:1; flex-direction:column; overflow:hidden; }
+        .chat-panel.active { display:flex; }
+
+        .chat-header {
+            padding:10px 24px; border-bottom:1px solid var(--border);
+            display:flex; align-items:center; justify-content:space-between;
+        }
+        .chat-header h2 { font-size:14px; font-weight:600; }
+        .model-badge {
+            font-size:10px; padding:4px 10px; background:var(--surface2);
+            border-radius:20px; color:var(--text-dim); font-weight:500;
+        }
+
+        .messages {
+            flex:1; overflow-y:auto; padding:24px; display:flex;
+            flex-direction:column; gap:14px;
+        }
+        .message {
+            max-width:78%; padding:14px 18px; border-radius:14px;
+            font-size:13.5px; line-height:1.65; white-space:pre-wrap; word-wrap:break-word;
+        }
+        .message.user {
+            align-self:flex-end; background:var(--user-bg);
+            border-bottom-right-radius:4px;
+        }
+        .message.bot {
+            align-self:flex-start; background:var(--bot-bg);
+            border:1px solid var(--border); border-bottom-left-radius:4px;
+        }
+        .message .sources {
+            margin-top:10px; padding-top:8px; border-top:1px solid var(--border);
+            font-size:11px; color:var(--text-dim); display:flex; flex-wrap:wrap; gap:4px;
+        }
+        .message .sources .src-tag {
+            background:var(--surface3); padding:2px 8px; border-radius:4px;
+        }
+        .message.typing .dots { display:inline-flex; gap:4px; }
+        .message.typing .dots span {
+            width:7px; height:7px; background:var(--text-dim); border-radius:50%;
+            animation:bounce 1.4s infinite ease-in-out;
+        }
+        .message.typing .dots span:nth-child(2) { animation-delay:0.2s; }
+        .message.typing .dots span:nth-child(3) { animation-delay:0.4s; }
+        @keyframes bounce {
+            0%,80%,100% { transform:scale(0.6); opacity:0.4; }
+            40% { transform:scale(1); opacity:1; }
+        }
+
+        .welcome-chat {
+            flex:1; display:flex; flex-direction:column;
+            align-items:center; justify-content:center; color:var(--text-dim); text-align:center;
+        }
+        .welcome-chat .icon { font-size:40px; margin-bottom:12px; }
+        .welcome-chat h3 { font-size:17px; color:var(--text); margin-bottom:6px; }
+        .welcome-chat p { font-size:13px; max-width:380px; line-height:1.5; }
+
+        .input-area { padding:14px 24px; border-top:1px solid var(--border); }
+        .input-wrapper { display:flex; gap:10px; align-items:flex-end; }
+        .input-wrapper textarea {
+            flex:1; background:var(--surface2); border:1px solid var(--border);
+            border-radius:var(--radius); padding:11px 14px; color:var(--text);
+            font-size:13.5px; font-family:inherit; resize:none;
+            min-height:44px; max-height:120px; outline:none; transition:border-color 0.15s;
+        }
+        .input-wrapper textarea:focus { border-color:var(--accent); }
+        .input-wrapper textarea::placeholder { color:var(--text-muted); }
+        .send-btn {
+            width:44px; height:44px; border-radius:var(--radius); background:var(--accent);
+            border:none; color:white; font-size:16px; cursor:pointer;
+            display:flex; align-items:center; justify-content:center;
+            transition:background 0.15s; flex-shrink:0;
+        }
+        .send-btn:hover { background:var(--accent-hover); }
+        .send-btn:disabled { opacity:0.4; cursor:not-allowed; }
+
+        /* ── Toast ───────────────────────────────── */
+        .toast-container {
+            position:fixed; top:20px; right:20px; z-index:1000;
+            display:flex; flex-direction:column; gap:8px;
+        }
+        .toast {
+            padding:10px 18px; border-radius:var(--radius); font-size:12px;
+            font-weight:500; animation:slideIn 0.3s ease; max-width:340px;
+        }
+        .toast.success { background:var(--green-bg); color:var(--green); border:1px solid rgba(61,214,140,0.25); }
+        .toast.error { background:var(--red-bg); color:var(--red); border:1px solid rgba(239,91,91,0.25); }
+        .toast.info { background:var(--accent-bg); color:var(--accent); border:1px solid rgba(91,141,239,0.25); }
+        @keyframes slideIn { from{transform:translateX(100%);opacity:0;} to{transform:translateX(0);opacity:1;} }
+
+        /* ── Spinner ─────────────────────────────── */
+        .spinner-overlay {
+            display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55);
+            z-index:999; align-items:center; justify-content:center;
+        }
+        .spinner-overlay.active { display:flex; }
+        .spinner-box {
+            background:var(--surface); padding:28px 36px; border-radius:var(--radius-lg);
+            text-align:center; border:1px solid var(--border);
+        }
+        .spinner {
+            width:32px; height:32px; border:3px solid var(--border);
+            border-top-color:var(--accent); border-radius:50%;
+            animation:spin 0.8s linear infinite; margin:0 auto 10px;
+        }
+        .spinner-box .spin-text { font-size:13px; color:var(--text-dim); }
+        @keyframes spin { to{transform:rotate(360deg);} }
+
+        /* ── Scrollbar ───────────────────────────── */
+        ::-webkit-scrollbar { width:5px; }
+        ::-webkit-scrollbar-track { background:transparent; }
+        ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+        ::-webkit-scrollbar-thumb:hover { background:var(--text-muted); }
+    </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════
+     VIEW 1: PROJECT DASHBOARD
+     ═══════════════════════════════════════════ -->
+<div id="dashboard" class="view active">
+    <div class="dash-header">
+        <div class="logo">
+            <h1>Project RAG Pro</h1>
+            <span class="badge">MULTI-PROJECT</span>
+            <span class="badge-purple">DUAL POOL</span>
+        </div>
+    </div>
+    <div class="dash-body">
+        <!-- New project -->
+        <div class="section-title">Create New Project</div>
+        <div class="new-project-card">
+            <div class="form-row">
+                <div class="form-group" style="flex:2">
+                    <label>Project Name</label>
+                    <input id="new-proj-name" placeholder="e.g. Subsea Pipeline Phase 2" />
+                </div>
+                <div class="form-group" style="flex:3">
+                    <label>Description (optional)</label>
+                    <input id="new-proj-desc" placeholder="Brief description of the project" />
+                </div>
+                <button class="btn btn-primary" style="height:40px; padding:0 24px;" onclick="createProject()">
+                    + Create
+                </button>
+            </div>
+        </div>
+
+        <!-- Project list -->
+        <div class="section-title">Your Projects</div>
+        <div id="project-grid" class="project-grid"></div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     VIEW 2: PROJECT WORKSPACE
+     ═══════════════════════════════════════════ -->
+<div id="workspace" class="view">
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <button class="back-btn" onclick="goBack()" title="Back to projects">&larr;</button>
+            <div class="proj-info">
+                <div class="proj-name" id="ws-proj-name">Project</div>
+                <div class="proj-sub" id="ws-proj-desc">&mdash;</div>
+            </div>
+        </div>
+
+        <!-- Pool tabs -->
+        <div class="pool-tabs">
+            <div class="pool-tab main-tab active" onclick="switchSidebarPool('main')">Main Docs</div>
+            <div class="pool-tab clar-tab" onclick="switchSidebarPool('clarification')">Clarifications</div>
+        </div>
+
+        <!-- ── Main pool panel ── -->
+        <div class="pool-panel active" id="panel-main">
+            <div class="sidebar-section">
+                <h3>Index Status</h3>
+                <div class="status-row">
+                    <div class="status-pill">
+                        <div class="label">Files</div>
+                        <div class="value" id="main-stat-files">0</div>
+                    </div>
+                    <div class="status-pill">
+                        <div class="label">Chunks</div>
+                        <div class="value" id="main-stat-chunks">0</div>
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary btn-full" id="btn-sync-main" onclick="doSync('main')">Sync Index</button>
+                    <button class="btn btn-danger" id="btn-rebuild-main" onclick="doRebuild('main')">Rebuild</button>
+                </div>
+            </div>
+            <div class="sidebar-section">
+                <h3>Upload Main Documents</h3>
+                <div class="upload-area" id="upload-area-main">
+                    <div class="icon">+</div>
+                    <div class="text">Drop files or <strong>click to browse</strong></div>
+                    <div class="formats">PDF, XLSX, XLS</div>
+                </div>
+                <input type="file" id="file-input-main" multiple accept=".pdf,.xlsx,.xls" style="display:none">
+            </div>
+            <div class="sidebar-section" style="padding-bottom:8px;">
+                <h3>Main Documents</h3>
+            </div>
+            <div class="file-list" id="file-list-main"></div>
+        </div>
+
+        <!-- ── Clarification pool panel ── -->
+        <div class="pool-panel" id="panel-clarification">
+            <div class="sidebar-section">
+                <h3>Index Status</h3>
+                <div class="status-row">
+                    <div class="status-pill">
+                        <div class="label">Files</div>
+                        <div class="value" id="clar-stat-files">0</div>
+                    </div>
+                    <div class="status-pill">
+                        <div class="label">Chunks</div>
+                        <div class="value" id="clar-stat-chunks">0</div>
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-purple btn-full" id="btn-sync-clar" onclick="doSync('clarification')">Sync Index</button>
+                    <button class="btn btn-danger" id="btn-rebuild-clar" onclick="doRebuild('clarification')">Rebuild</button>
+                </div>
+            </div>
+            <div class="sidebar-section">
+                <h3>Upload Clarification Documents</h3>
+                <div class="upload-area" id="upload-area-clarification">
+                    <div class="icon">+</div>
+                    <div class="text">Drop files or <strong>click to browse</strong></div>
+                    <div class="formats">PDF, XLSX, XLS</div>
+                </div>
+                <input type="file" id="file-input-clarification" multiple accept=".pdf,.xlsx,.xls" style="display:none">
+            </div>
+            <div class="sidebar-section" style="padding-bottom:8px;">
+                <h3>Clarification Documents</h3>
+            </div>
+            <div class="file-list" id="file-list-clarification"></div>
+        </div>
+    </div>
+
+    <!-- Chat -->
+    <div class="chat-area">
+        <!-- Chat pool tabs -->
+        <div class="chat-pool-tabs">
+            <div class="chat-pool-tab main-chat-tab active" onclick="switchChatPool('main')">
+                <span class="tab-dot main-dot"></span> Main Documents Chat
+            </div>
+            <div class="chat-pool-tab clar-chat-tab" onclick="switchChatPool('clarification')">
+                <span class="tab-dot clar-dot"></span> Clarifications Chat
+            </div>
+        </div>
+
+        <!-- Main chat panel -->
+        <div class="chat-panel active" id="chat-main">
+            <div class="chat-header">
+                <h2>Main Documents</h2>
+                <span class="model-badge" id="ws-model-main">gpt-4.1-mini</span>
+            </div>
+            <div class="messages" id="messages-main">
+                <div class="welcome-chat">
+                    <div class="icon">&#128196;</div>
+                    <h3>Main Documents Chat</h3>
+                    <p>Upload your bid/project documents, click <strong>Sync Index</strong>, then ask questions about the main project scope.</p>
+                </div>
+            </div>
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea id="question-main" placeholder="Ask about main bid documents..." rows="1"></textarea>
+                    <button class="send-btn" id="send-btn-main" onclick="sendQuestion('main')">&#10148;</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Clarification chat panel -->
+        <div class="chat-panel" id="chat-clarification">
+            <div class="chat-header">
+                <h2>Clarification Documents</h2>
+                <span class="model-badge" id="ws-model-clar">gpt-4.1-mini</span>
+            </div>
+            <div class="messages" id="messages-clarification">
+                <div class="welcome-chat">
+                    <div class="icon">&#128221;</div>
+                    <h3>Clarifications Chat</h3>
+                    <p>Upload clarification Excel files, click <strong>Sync Index</strong>, then ask about TQs, amendments, and revised requirements.</p>
+                </div>
+            </div>
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea id="question-clarification" placeholder="Ask about clarifications, TQs, amendments..." rows="1"></textarea>
+                    <button class="send-btn" id="send-btn-clar" onclick="sendQuestion('clarification')">&#10148;</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- Spinner -->
+<div class="spinner-overlay" id="spinner">
+    <div class="spinner-box">
+        <div class="spinner"></div>
+        <div class="spin-text" id="spinner-text">Processing...</div>
+    </div>
+</div>
+
+<script>
+// ── State ───────────────────────────────────────
+let currentProject = null;
+let hasMessages = { main: false, clarification: false };
+
+// ── Helpers ─────────────────────────────────────
+function showToast(msg, type='info') {
+    const c = document.getElementById('toast-container');
+    const t = document.createElement('div');
+    t.className = `toast ${type}`; t.textContent = msg;
+    c.appendChild(t); setTimeout(()=>t.remove(), 5000);
+}
+function showSpinner(text) {
+    document.getElementById('spinner-text').textContent = text;
+    document.getElementById('spinner').classList.add('active');
+}
+function hideSpinner() { document.getElementById('spinner').classList.remove('active'); }
+
+function switchView(viewId) {
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    document.getElementById(viewId).classList.add('active');
+}
+
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+    return (bytes/1048576).toFixed(1) + ' MB';
+}
+
+function formatDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+}
+
+function escapeHtml(text) {
+    const d = document.createElement('div'); d.textContent = text; return d.innerHTML;
+}
+
+// ── Sidebar pool switching ─────────────────────
+function switchSidebarPool(pool) {
+    document.querySelectorAll('.pool-tab').forEach(t => {
+        t.classList.remove('active');
+    });
+    document.querySelectorAll('.pool-panel').forEach(p => p.classList.remove('active'));
+
+    if (pool === 'main') {
+        document.querySelector('.pool-tab.main-tab').classList.add('active');
+    } else {
+        document.querySelector('.pool-tab.clar-tab').classList.add('active');
+    }
+    document.getElementById(`panel-${pool}`).classList.add('active');
+}
+
+// ── Chat pool switching ────────────────────────
+function switchChatPool(pool) {
+    document.querySelectorAll('.chat-pool-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.chat-panel').forEach(p => p.classList.remove('active'));
+
+    if (pool === 'main') {
+        document.querySelector('.chat-pool-tab.main-chat-tab').classList.add('active');
+    } else {
+        document.querySelector('.chat-pool-tab.clar-chat-tab').classList.add('active');
+    }
+    document.getElementById(`chat-${pool}`).classList.add('active');
+}
+
+// ══════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════
+
+async function loadProjects() {
+    try {
+        const res = await fetch('/api/projects');
+        const data = await res.json();
+        renderProjects(data.projects || []);
+    } catch(e) { showToast('Failed to load projects','error'); }
+}
+
+function renderProjects(projects) {
+    const grid = document.getElementById('project-grid');
+    if (!projects.length) {
+        grid.innerHTML = `
+            <div class="empty-state" style="grid-column:1/-1;">
+                <div class="icon">&#128193;</div>
+                <h3>No projects yet</h3>
+                <p>Create your first project above to get started.</p>
+            </div>`;
+        return;
+    }
+    grid.innerHTML = projects.map(p => `
+        <div class="project-card" onclick="openProject('${p.id}')">
+            <button class="p-delete" onclick="event.stopPropagation();deleteProject('${p.id}','${escapeHtml(p.name)}')" title="Delete project">&#10005;</button>
+            <div class="p-name">${escapeHtml(p.name)}</div>
+            <div class="p-desc">${escapeHtml(p.description || 'No description')}</div>
+            <div class="p-stats-group">
+                <div class="p-stats">
+                    <span class="pool-label main-label">MAIN</span>
+                    <div class="stat"><span class="num">${p.main_doc_count||0}</span> docs</div>
+                    <div class="stat"><span class="num">${p.main_chunk_count||0}</span> chunks</div>
+                </div>
+                <div class="p-stats">
+                    <span class="pool-label clar-label">CLAR</span>
+                    <div class="stat"><span class="num">${p.clarification_doc_count||0}</span> docs</div>
+                    <div class="stat"><span class="num">${p.clarification_chunk_count||0}</span> chunks</div>
+                </div>
+            </div>
+            <div class="p-time">Last accessed: ${formatDate(p.last_accessed)}</div>
+        </div>
+    `).join('');
+}
+
+async function createProject() {
+    const name = document.getElementById('new-proj-name').value.trim();
+    const desc = document.getElementById('new-proj-desc').value.trim();
+    if (!name) { showToast('Please enter a project name','error'); return; }
+    try {
+        const res = await fetch('/api/projects', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({name, description:desc})
+        });
+        const data = await res.json();
+        if (data.error) { showToast(data.error,'error'); return; }
+        document.getElementById('new-proj-name').value = '';
+        document.getElementById('new-proj-desc').value = '';
+        showToast(`Project "${name}" created!`,'success');
+        loadProjects();
+    } catch(e) { showToast('Failed to create project','error'); }
+}
+
+async function deleteProject(id, name) {
+    if (!confirm(`Delete project "${name}" and all its data? This cannot be undone.`)) return;
+    try {
+        await fetch(`/api/projects/${id}`, {method:'DELETE'});
+        showToast(`Project "${name}" deleted`,'info');
+        loadProjects();
+    } catch(e) { showToast('Failed to delete','error'); }
+}
+
+// ══════════════════════════════════════════════════
+// WORKSPACE
+// ══════════════════════════════════════════════════
+
+async function openProject(id) {
+    currentProject = id;
+    hasMessages = { main: false, clarification: false };
+
+    // Reset chat panels
+    ['main','clarification'].forEach(pool => {
+        const icon = pool === 'main' ? '&#128196;' : '&#128221;';
+        const title = pool === 'main' ? 'Main Documents Chat' : 'Clarifications Chat';
+        const desc = pool === 'main'
+            ? 'Upload your bid/project documents, click <strong>Sync Index</strong>, then ask questions about the main project scope.'
+            : 'Upload clarification Excel files, click <strong>Sync Index</strong>, then ask about TQs, amendments, and revised requirements.';
+        document.getElementById(`messages-${pool}`).innerHTML = `
+            <div class="welcome-chat">
+                <div class="icon">${icon}</div>
+                <h3>${title}</h3>
+                <p>${desc}</p>
+            </div>`;
+    });
+
+    // Reset to main tab
+    switchSidebarPool('main');
+    switchChatPool('main');
+    switchView('workspace');
+    await refreshWorkspace();
+}
+
+function goBack() {
+    currentProject = null;
+    switchView('dashboard');
+    loadProjects();
+}
+
+async function refreshWorkspace() {
+    if (!currentProject) return;
+    try {
+        const res = await fetch(`/api/projects/${currentProject}/status`);
+        const data = await res.json();
+        document.getElementById('ws-proj-name').textContent = data.project?.name || currentProject;
+        document.getElementById('ws-proj-desc').textContent = data.project?.description || '\u2014';
+
+        const model = data.chat_model || 'gpt-4.1-mini';
+        document.getElementById('ws-model-main').textContent = model;
+        document.getElementById('ws-model-clar').textContent = model;
+
+        // Main pool
+        const mainPool = data.pools?.main || {};
+        document.getElementById('main-stat-files').textContent = mainPool.files || 0;
+        document.getElementById('main-stat-chunks').textContent = mainPool.chunks || 0;
+        renderFileList('main', mainPool.files_list || []);
+
+        // Clarification pool
+        const clarPool = data.pools?.clarification || {};
+        document.getElementById('clar-stat-files').textContent = clarPool.files || 0;
+        document.getElementById('clar-stat-chunks').textContent = clarPool.chunks || 0;
+        renderFileList('clarification', clarPool.files_list || []);
+    } catch(e) { console.error(e); }
+}
+
+function renderFileList(pool, files) {
+    const el = document.getElementById(`file-list-${pool}`);
+    if (!files.length) {
+        el.innerHTML = '<div style="padding:0 20px;font-size:12px;color:var(--text-dim);">No documents uploaded yet.</div>';
+        return;
+    }
+    el.innerHTML = files.map(f => {
+        const ext = f.type.toLowerCase();
+        const iconClass = ext === 'pdf' ? 'pdf' : 'xlsx';
+        const statusClass = f.indexed ? 'indexed' : 'pending';
+        const statusTitle = f.indexed ? 'Indexed' : 'Pending sync';
+        return `
+        <div class="file-item">
+            <div class="f-icon ${iconClass}">${f.type}</div>
+            <div class="f-info">
+                <div class="f-name" title="${f.filename}">${f.filename}</div>
+                <div class="f-meta">${formatSize(f.size)} · ${f.chunks} chunks</div>
+            </div>
+            <div class="f-status ${statusClass}" title="${statusTitle}"></div>
+            <button class="f-del" onclick="deleteFile('${pool}','${f.filename}')" title="Delete">&#10005;</button>
+        </div>`;
+    }).join('');
+}
+
+// ── Upload (per pool) ──────────────────────────
+['main','clarification'].forEach(pool => {
+    const area = document.getElementById(`upload-area-${pool}`);
+    const input = document.getElementById(`file-input-${pool}`);
+
+    area.addEventListener('click', ()=>input.click());
+    area.addEventListener('dragover', e=>{e.preventDefault();area.classList.add('dragover');});
+    area.addEventListener('dragleave', ()=>area.classList.remove('dragover'));
+    area.addEventListener('drop', e=>{
+        e.preventDefault(); area.classList.remove('dragover');
+        handleFiles(pool, e.dataTransfer.files);
+    });
+    input.addEventListener('change', ()=>{handleFiles(pool, input.files); input.value='';});
+});
+
+async function handleFiles(pool, files) {
+    if (!files.length || !currentProject) return;
+    const formData = new FormData();
+    let count = 0;
+    for (const f of files) {
+        const ext = f.name.split('.').pop().toLowerCase();
+        if (['pdf','xlsx','xls'].includes(ext)) { formData.append('files',f); count++; }
+    }
+    if (!count) { showToast('Please select PDF or Excel files.','error'); return; }
+    const poolLabel = pool === 'main' ? 'main documents' : 'clarifications';
+    showSpinner(`Uploading ${count} file(s) to ${poolLabel}...`);
+    try {
+        const res = await fetch(`/api/projects/${currentProject}/${pool}/upload`, {method:'POST', body:formData});
+        const data = await res.json();
+        hideSpinner();
+        showToast(`Uploaded ${data.count} file(s) to ${poolLabel}. Click Sync Index to process.`,'success');
+        refreshWorkspace();
+    } catch(e) { hideSpinner(); showToast('Upload failed: '+e.message,'error'); }
+}
+
+async function deleteFile(pool, filename) {
+    if (!confirm(`Delete ${filename}?`)) return;
+    try {
+        await fetch(`/api/projects/${currentProject}/${pool}/delete_file`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({filename})
+        });
+        showToast(`Deleted ${filename}. Click Sync to update index.`,'info');
+        refreshWorkspace();
+    } catch(e) { showToast('Delete failed','error'); }
+}
+
+// ── Sync / Rebuild (per pool) ──────────────────
+async function doSync(pool) {
+    if (!currentProject) return;
+    const poolLabel = pool === 'main' ? 'Main Documents' : 'Clarifications';
+    const btnId = pool === 'main' ? 'btn-sync-main' : 'btn-sync-clar';
+    showSpinner(`Syncing ${poolLabel}...`);
+    document.getElementById(btnId).disabled = true;
+    try {
+        const res = await fetch(`/api/projects/${currentProject}/${pool}/sync`, {method:'POST'});
+        const data = await res.json();
+        hideSpinner();
+        const logMsg = data.log?.length ? '\n' + data.log.join('\n') : 'No changes detected.';
+        showToast(`${poolLabel} sync complete \u2014 ${data.files} file(s), ${data.chunks} chunk(s). ${logMsg}`,'success');
+        refreshWorkspace();
+    } catch(e) { hideSpinner(); showToast('Sync failed: '+e.message,'error'); }
+    document.getElementById(btnId).disabled = false;
+}
+
+async function doRebuild(pool) {
+    if (!currentProject) return;
+    const poolLabel = pool === 'main' ? 'Main Documents' : 'Clarifications';
+    if (!confirm(`Delete all ${poolLabel} embeddings and rebuild from scratch?`)) return;
+    const btnId = pool === 'main' ? 'btn-rebuild-main' : 'btn-rebuild-clar';
+    showSpinner(`Rebuilding ${poolLabel} index...`);
+    document.getElementById(btnId).disabled = true;
+    try {
+        const res = await fetch(`/api/projects/${currentProject}/${pool}/rebuild`, {method:'POST'});
+        const data = await res.json();
+        hideSpinner();
+        showToast(`${poolLabel} rebuild complete \u2014 ${data.files} file(s), ${data.chunks} chunk(s).`,'success');
+        refreshWorkspace();
+    } catch(e) { hideSpinner(); showToast('Rebuild failed: '+e.message,'error'); }
+    document.getElementById(btnId).disabled = false;
+}
+
+// ── Chat (per pool) ────────────────────────────
+function addMessage(pool, content, role, sources=[]) {
+    const messagesEl = document.getElementById(`messages-${pool}`);
+    if (!hasMessages[pool]) { messagesEl.innerHTML = ''; hasMessages[pool] = true; }
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+    if (role === 'bot' && sources.length) {
+        const tags = sources.map(s=>`<span class="src-tag">${escapeHtml(s.file)}, ${escapeHtml(s.page)}</span>`).join('');
+        div.innerHTML = `${escapeHtml(content)}<div class="sources"><strong>Sources:&nbsp;</strong>${tags}</div>`;
+    } else { div.textContent = content; }
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function addTyping(pool) {
+    const messagesEl = document.getElementById(`messages-${pool}`);
+    if (!hasMessages[pool]) { messagesEl.innerHTML = ''; hasMessages[pool] = true; }
+    const div = document.createElement('div');
+    div.className = 'message bot typing'; div.id = `typing-${pool}`;
+    div.innerHTML = '<div class="dots"><span></span><span></span><span></span></div>';
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+function removeTyping(pool) { const el=document.getElementById(`typing-${pool}`); if(el) el.remove(); }
+
+async function sendQuestion(pool) {
+    const questionEl = document.getElementById(`question-${pool}`);
+    const sendBtnId = pool === 'main' ? 'send-btn-main' : 'send-btn-clar';
+    const q = questionEl.value.trim();
+    if (!q || !currentProject) return;
+    addMessage(pool, q, 'user');
+    questionEl.value = ''; questionEl.style.height = 'auto';
+    document.getElementById(sendBtnId).disabled = true;
+    addTyping(pool);
+    try {
+        const res = await fetch(`/api/projects/${currentProject}/${pool}/chat`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({question:q})
+        });
+        const data = await res.json();
+        removeTyping(pool);
+        if (data.error) { addMessage(pool, 'Error: '+data.error,'bot'); }
+        else { addMessage(pool, data.answer,'bot',data.sources||[]); }
+    } catch(e) { removeTyping(pool); addMessage(pool, 'Error: '+e.message,'bot'); }
+    document.getElementById(sendBtnId).disabled = false; questionEl.focus();
+}
+
+// Auto-resize textareas
+['main','clarification'].forEach(pool => {
+    const el = document.getElementById(`question-${pool}`);
+    el.addEventListener('input', function(){
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight,120)+'px';
+    });
+    el.addEventListener('keydown', function(e){
+        if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(pool); }
+    });
+});
+
+// Allow creating project with Enter key
+document.getElementById('new-proj-name').addEventListener('keydown', function(e){
+    if (e.key==='Enter') { e.preventDefault(); createProject(); }
+});
+document.getElementById('new-proj-desc').addEventListener('keydown', function(e){
+    if (e.key==='Enter') { e.preventDefault(); createProject(); }
+});
+
+// ── Init ────────────────────────────────────────
+loadProjects();
+</script>
+</body>
+</html>
 
