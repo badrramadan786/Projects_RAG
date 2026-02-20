@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: project-rag-pro
+    runtime: docker
+    plan: free
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: KMP_DUPLICATE_LIB_OK
+        value: "TRUE"
+    disk:
+      name: rag-data
+      mountPath: /app/projects
+      sizeGB: 1
