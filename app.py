@@ -727,6 +727,39 @@ class FaissStore:
 _stores: dict[str, FaissStore] = {}
 _sync_lock = threading.Lock()
 
+# ── Background task tracking ──────────────────────────────────────────────
+
+_tasks: dict[str, dict[str, Any]] = {}  # task_id -> {status, progress, message, result}
+
+
+def _task_key(project_id: str, pool: str) -> str:
+    return f"{project_id}_{pool}"
+
+
+def _run_sync_bg(project_id: str, pool: str, rebuild: bool = False):
+    """Run sync/rebuild in background thread and update task status."""
+    key = _task_key(project_id, pool)
+    try:
+        _tasks[key] = {"status": "running", "progress": "Starting...", "result": None}
+        with _sync_lock:
+            if rebuild:
+                _tasks[key]["progress"] = "Clearing old index..."
+                project_dir = get_project_dir(project_id)
+                store_dir = project_dir / f"faiss_store_{pool}"
+                if store_dir.exists():
+                    shutil.rmtree(store_dir)
+                mpath = manifest_path(project_dir, pool)
+                if mpath.exists():
+                    mpath.unlink()
+                store_dir.mkdir(parents=True, exist_ok=True)
+                sk = f"{project_id}_{pool}"
+                _stores[sk] = FaissStore(store_dir)
+            _tasks[key]["progress"] = "Scanning documents..."
+            result = smart_sync(project_id, pool, progress_cb=lambda msg: _tasks.get(key, {}).__setitem__("progress", msg))
+        _tasks[key] = {"status": "done", "progress": "Complete", "result": result}
+    except Exception as e:
+        _tasks[key] = {"status": "error", "progress": str(e), "result": None}
+
 
 def get_store(project_id: str, pool: str) -> FaissStore:
     key = f"{project_id}_{pool}"
@@ -771,7 +804,7 @@ def discover_docs(docs_dir: pathlib.Path) -> dict[str, pathlib.Path]:
     return docs
 
 
-def smart_sync(project_id: str, pool: str) -> dict:
+def smart_sync(project_id: str, pool: str, progress_cb=None) -> dict:
     """Run smart sync for a project pool and return a status dict."""
     project_dir = get_project_dir(project_id)
     docs_dir = project_dir / f"documents_{pool}"
@@ -805,7 +838,11 @@ def smart_sync(project_id: str, pool: str) -> dict:
         else:
             log.append(f"Indexed: {doc_path.name}")
 
+        if progress_cb:
+            progress_cb(f"Processing: {doc_path.name}")
         chunks = build_chunks_for_file(doc_path, current_hash)
+        if progress_cb:
+            progress_cb(f"Embedding: {doc_path.name} ({len(chunks)} chunks)")
         upsert_chunks(store, chunks)
 
         manifest[abs_path] = {
@@ -1028,9 +1065,13 @@ def sync_route(project_id, pool):
     project_dir = get_project_dir(project_id)
     if not project_dir.exists():
         return jsonify({"error": "Project not found"}), 404
-    with _sync_lock:
-        result = smart_sync(project_id, pool)
-    return jsonify(result)
+    key = _task_key(project_id, pool)
+    existing = _tasks.get(key, {})
+    if existing.get("status") == "running":
+        return jsonify({"error": "Sync already in progress"}), 409
+    t = threading.Thread(target=_run_sync_bg, args=(project_id, pool, False), daemon=True)
+    t.start()
+    return jsonify({"started": True, "task_key": key})
 
 
 @app.route("/api/projects/<project_id>/<pool>/rebuild", methods=["POST"])
@@ -1040,9 +1081,20 @@ def rebuild_route(project_id, pool):
     project_dir = get_project_dir(project_id)
     if not project_dir.exists():
         return jsonify({"error": "Project not found"}), 404
-    with _sync_lock:
-        result = full_rebuild(project_id, pool)
-    return jsonify(result)
+    key = _task_key(project_id, pool)
+    existing = _tasks.get(key, {})
+    if existing.get("status") == "running":
+        return jsonify({"error": "Sync already in progress"}), 409
+    t = threading.Thread(target=_run_sync_bg, args=(project_id, pool, True), daemon=True)
+    t.start()
+    return jsonify({"started": True, "task_key": key})
+
+
+@app.route("/api/projects/<project_id>/<pool>/task_status", methods=["GET"])
+def task_status_route(project_id, pool):
+    key = _task_key(project_id, pool)
+    task = _tasks.get(key, {"status": "idle", "progress": "", "result": None})
+    return jsonify(task)
 
 
 # ── Chat (per pool) ─────────────────────────────────────────────────────────
