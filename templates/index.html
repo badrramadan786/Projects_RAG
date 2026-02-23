@@ -278,11 +278,11 @@
         /* ══════════════════════════════════════════
            CHAT AREA
            ══════════════════════════════════════════ */
-        .chat-area { flex:1; display:flex; flex-direction:column; }
+        .chat-area { flex:1; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
 
         .chat-pool-tabs {
             display:flex; border-bottom:1px solid var(--border);
-            background:var(--surface);
+            background:var(--surface); flex-shrink:0;
         }
         .chat-pool-tab {
             padding:14px 24px; cursor:pointer; font-size:13px; font-weight:600;
@@ -296,12 +296,13 @@
         .tab-dot.main-dot { background:var(--accent); }
         .tab-dot.clar-dot { background:var(--purple); }
 
-        .chat-panel { display:none; flex-direction:column; flex:1; }
+        .chat-panel { display:none; flex-direction:column; flex:1; overflow:hidden; min-height:0; }
         .chat-panel.active { display:flex; }
 
         .chat-header {
             padding:14px 24px; border-bottom:1px solid var(--border);
             display:flex; align-items:center; justify-content:space-between;
+            flex-shrink:0;
         }
         .chat-header h2 { font-size:16px; font-weight:600; }
         .model-badge {
@@ -312,6 +313,7 @@
         .messages {
             flex:1; overflow-y:auto; padding:20px 24px;
             display:flex; flex-direction:column; gap:16px;
+            min-height:0;
         }
         .welcome-chat { text-align:center; margin:auto; color:var(--text-dim); }
         .welcome-chat .icon { font-size:48px; margin-bottom:8px; opacity:0.5; }
@@ -353,7 +355,7 @@
 
         .input-area {
             padding:16px 24px; border-top:1px solid var(--border);
-            background:var(--surface);
+            background:var(--surface); flex-shrink:0;
         }
         .input-wrapper {
             display:flex; gap:10px; align-items:flex-end;
