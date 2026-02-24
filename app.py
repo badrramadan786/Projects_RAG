@@ -87,28 +87,110 @@ MANDATORY RULES:
 # ── Helper: Excel to text conversion ─────────────────────────────────────────
 
 def excel_to_text(filepath: Path) -> str:
-    """Convert an Excel file to a text representation for upload to OpenAI."""
+    """Convert an Excel file to a rich text representation for upload to OpenAI.
+    
+    Produces a well-structured text document that preserves:
+    - All sheet names
+    - Column headers
+    - Every row of data with labeled columns
+    - The original filename for citation purposes
+    """
     try:
         import openpyxl
     except ImportError:
+        log.error("openpyxl not installed — cannot convert Excel files")
         return ""
-    wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
+    
+    try:
+        wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
+    except Exception as e:
+        log.error(f"Failed to open Excel file {filepath.name}: {e}")
+        # Try without read_only mode (handles some edge cases)
+        try:
+            wb = openpyxl.load_workbook(filepath, data_only=True, read_only=False)
+        except Exception as e2:
+            log.error(f"Failed to open Excel file {filepath.name} (retry): {e2}")
+            return ""
+    
     parts = []
+    parts.append(f"DOCUMENT: {filepath.name}")
+    parts.append(f"TYPE: Excel Spreadsheet")
+    parts.append(f"SHEETS: {', '.join(wb.sheetnames)}")
+    parts.append("=" * 80)
+    
+    total_rows = 0
+    
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
-        parts.append(f"\n=== Sheet: {sheet_name} ===\n")
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
+        parts.append(f"\n{'=' * 80}")
+        parts.append(f"SHEET: {sheet_name}")
+        parts.append(f"{'=' * 80}\n")
+        
+        try:
+            rows = list(ws.iter_rows(values_only=True))
+        except Exception as e:
+            log.warning(f"Error reading sheet '{sheet_name}' in {filepath.name}: {e}")
+            parts.append(f"[Error reading this sheet: {e}]")
             continue
-        headers = [str(c) if c is not None else "" for c in rows[0]]
-        parts.append(" | ".join(headers))
-        parts.append("-" * 60)
-        for row in rows[1:]:
-            cells = [str(c) if c is not None else "" for c in row]
-            if any(c.strip() for c in cells):
-                parts.append(" | ".join(cells))
-    wb.close()
-    return "\n".join(parts)
+        
+        if not rows:
+            parts.append("[Empty sheet]")
+            continue
+        
+        # Find headers (first non-empty row)
+        headers = None
+        data_start = 0
+        for i, row in enumerate(rows):
+            cells = [str(c).strip() if c is not None else "" for c in row]
+            if any(cells):
+                headers = cells
+                data_start = i + 1
+                break
+        
+        if not headers:
+            parts.append("[No data found in this sheet]")
+            continue
+        
+        # Output as a table format
+        parts.append("COLUMNS: " + " | ".join(headers))
+        parts.append("-" * 80)
+        
+        sheet_rows = 0
+        for row in rows[data_start:]:
+            cells = [str(c).strip() if c is not None else "" for c in row]
+            # Skip completely empty rows
+            if not any(cells):
+                continue
+            
+            # Format as labeled columns for better semantic search
+            # e.g., "Column1: value1 | Column2: value2 | ..."
+            labeled_parts = []
+            for j, cell in enumerate(cells):
+                if j < len(headers) and headers[j]:
+                    labeled_parts.append(f"{headers[j]}: {cell}")
+                elif cell:
+                    labeled_parts.append(cell)
+            
+            if labeled_parts:
+                parts.append(" | ".join(labeled_parts))
+                sheet_rows += 1
+        
+        parts.append(f"\n[Sheet '{sheet_name}': {sheet_rows} data rows]")
+        total_rows += sheet_rows
+    
+    try:
+        wb.close()
+    except Exception:
+        pass
+    
+    parts.append(f"\n{'=' * 80}")
+    parts.append(f"END OF DOCUMENT: {filepath.name}")
+    parts.append(f"TOTAL DATA ROWS: {total_rows}")
+    parts.append(f"{'=' * 80}")
+    
+    result = "\n".join(parts)
+    log.info(f"Excel conversion: {filepath.name} → {total_rows} rows, {len(result)} chars")
+    return result
 
 
 # ── Project metadata management ──────────────────────────────────────────────
@@ -254,41 +336,69 @@ def sync_pool(project_id: str, pool: str, rebuild: bool = False):
             log.info(f"Uploading {fname} to OpenAI...")
 
             try:
-                # For Excel files, convert to text first
+                # For Excel files, convert to text first (OpenAI File Search doesn't support .xlsx)
                 if fname.lower().endswith((".xlsx", ".xls")):
+                    log.info(f"Converting Excel file to text: {fname}")
+                    _tasks[key]["progress"] = f"Converting Excel: {fname}"
                     text_content = excel_to_text(fpath)
                     if not text_content.strip():
-                        log_entries.append(f"Skipped (empty): {fname}")
+                        log_entries.append(f"Skipped (empty Excel): {fname}")
+                        log.warning(f"Excel file {fname} produced empty text — skipping")
                         continue
-                    # Write to temp .txt file for upload
-                    tmp = tempfile.NamedTemporaryFile(
-                        mode="w", suffix=f"_{fname}.txt", delete=False
-                    )
-                    tmp.write(text_content)
-                    tmp.close()
-                    with open(tmp.name, "rb") as f:
+                    
+                    # Create a clean .txt filename: report.xlsx → report_xlsx.txt
+                    clean_name = fname.rsplit(".", 1)[0] + "_" + fname.rsplit(".", 1)[1] + ".txt"
+                    log.info(f"Excel {fname} converted: {len(text_content)} chars → uploading as {clean_name}")
+                    
+                    # Write to temp file with clean name
+                    tmp_dir = tempfile.mkdtemp()
+                    tmp_path = os.path.join(tmp_dir, clean_name)
+                    with open(tmp_path, "w", encoding="utf-8") as f:
+                        f.write(text_content)
+                    
+                    _tasks[key]["progress"] = f"Uploading converted: {fname}"
+                    with open(tmp_path, "rb") as f:
                         oai_file = client.files.create(file=f, purpose="assistants")
-                    os.unlink(tmp.name)
+                    
+                    # Clean up temp file
+                    try:
+                        os.unlink(tmp_path)
+                        os.rmdir(tmp_dir)
+                    except Exception:
+                        pass
+                    
+                    log.info(f"Excel {fname} uploaded to OpenAI as file_id={oai_file.id}")
                 else:
+                    # PDF files — upload directly
                     with open(fpath, "rb") as f:
                         oai_file = client.files.create(file=f, purpose="assistants")
 
                 # Add to vector store
                 _tasks[key]["progress"] = f"Indexing: {fname}"
-                client.vector_stores.files.create_and_poll(
+                log.info(f"Adding {fname} to vector store {vs_id}...")
+                result = client.vector_stores.files.create_and_poll(
                     vector_store_id=vs_id, file_id=oai_file.id
                 )
+                
+                # Check if indexing was successful
+                if hasattr(result, 'status') and result.status == 'failed':
+                    error_msg = getattr(result, 'last_error', 'Unknown error')
+                    log_entries.append(f"Index FAILED: {fname} — {error_msg}")
+                    log.error(f"Vector store indexing failed for {fname}: {error_msg}")
+                    continue
 
                 existing_files[fname] = {
                     "openai_file_id": oai_file.id,
                     "size": fpath.stat().st_size,
                 }
                 uploaded_count += 1
-                log_entries.append(f"Indexed: {fname}")
+                file_type = "Excel→Text" if fname.lower().endswith((".xlsx", ".xls")) else "PDF"
+                log_entries.append(f"Indexed ({file_type}): {fname}")
+                log.info(f"Successfully indexed {fname} ({file_type})")
 
             except Exception as e:
                 log_entries.append(f"Error uploading {fname}: {str(e)}")
-                log.error(f"Error uploading {fname}: {e}")
+                log.error(f"Error uploading {fname}: {e}", exc_info=True)
 
         # Remove files that no longer exist locally
         removed = []
@@ -317,10 +427,10 @@ def sync_pool(project_id: str, pool: str, rebuild: bool = False):
             "log": log_entries,
         }
         _tasks[key] = {"status": "done", "progress": "Complete", "result": result}
-        log.info(f"Sync complete for {project_id}/{pool}: {len(existing_files)} files")
+        log.info(f"Sync complete for {project_id}/{pool}: {len(existing_files)} files, {uploaded_count} new")
 
     except Exception as e:
-        log.error(f"Sync error: {e}")
+        log.error(f"Sync error: {e}", exc_info=True)
         _tasks[key] = {"status": "error", "progress": str(e), "result": None}
 
 
@@ -391,14 +501,20 @@ def chat_with_pool(project_id: str, pool: str, user_message: str) -> dict:
                         try:
                             cited_file = client.files.retrieve(ann.file_citation.file_id)
                             source_name = cited_file.filename
-                            # Clean up the source name (remove temp file prefixes)
+                            # Clean up the source name
+                            # Convert back: report_xlsx.txt → report.xlsx
+                            if source_name.endswith("_xlsx.txt"):
+                                source_name = source_name[:-9] + ".xlsx"
+                            elif source_name.endswith("_xls.txt"):
+                                source_name = source_name[:-8] + ".xls"
+                            # Remove any temp file prefixes
                             if source_name.startswith("_"):
                                 source_name = source_name.lstrip("_")
                             if source_name not in sources:
                                 sources.append(source_name)
                         except Exception:
                             pass
-                        text_val = text_val.replace(ann.text, "")
+                    text_val = text_val.replace(ann.text, "")
             answer_text += text_val
 
     return {"answer": answer_text.strip(), "sources": sources}
