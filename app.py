@@ -86,8 +86,83 @@ MANDATORY RULES:
 
 # ── Helper: Excel to text conversion ─────────────────────────────────────────
 
+def _read_excel_with_pandas(filepath: Path) -> dict[str, list[list[str]]]:
+    """Read an Excel file using pandas — handles corrupt custom properties that crash openpyxl.
+    
+    Returns a dict of {sheet_name: [[row1_cells], [row2_cells], ...]}.
+    """
+    import pandas as pd
+    sheets = {}
+    try:
+        # Read all sheets; header=None so we get raw rows including the header row
+        xls = pd.ExcelFile(filepath, engine="openpyxl")
+        for sheet_name in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name=sheet_name, header=None, dtype=str)
+            df = df.fillna("")
+            rows = df.values.tolist()
+            sheets[sheet_name] = rows
+        xls.close()
+    except Exception as e:
+        log.warning(f"pandas/openpyxl failed for {filepath.name}: {e}")
+        # Fallback: patch openpyxl custom properties to bypass the bug
+        try:
+            sheets = _read_excel_with_patched_openpyxl(filepath)
+        except Exception as e2:
+            log.warning(f"Patched openpyxl also failed for {filepath.name}: {e2}")
+            # Last resort: try calamine engine if available
+            try:
+                xls = pd.ExcelFile(filepath, engine="calamine")
+                for sheet_name in xls.sheet_names:
+                    df = pd.read_excel(xls, sheet_name=sheet_name, header=None, dtype=str)
+                    df = df.fillna("")
+                    sheets[sheet_name] = df.values.tolist()
+                xls.close()
+            except Exception as e3:
+                log.error(f"All Excel readers failed for {filepath.name}: {e3}")
+    return sheets
+
+
+def _read_excel_with_patched_openpyxl(filepath: Path) -> dict[str, list[list[str]]]:
+    """Read Excel by monkey-patching openpyxl to skip broken custom properties."""
+    import openpyxl
+    from openpyxl.packaging import custom
+    
+    # Save original
+    _orig_from_tree = custom.CustomPropertyList.from_tree
+    
+    @classmethod
+    def _safe_from_tree(cls, tree):
+        """Patched version that skips properties with None names."""
+        try:
+            return _orig_from_tree(tree)
+        except Exception:
+            # Return empty property list if parsing fails
+            return cls()
+    
+    # Apply patch
+    custom.CustomPropertyList.from_tree = _safe_from_tree
+    
+    try:
+        wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
+        sheets = {}
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                rows.append([str(c).strip() if c is not None else "" for c in row])
+            sheets[sheet_name] = rows
+        wb.close()
+        return sheets
+    finally:
+        # Restore original
+        custom.CustomPropertyList.from_tree = _orig_from_tree
+
+
 def excel_to_text(filepath: Path) -> str:
     """Convert an Excel file to a rich text representation for upload to OpenAI.
+    
+    Uses pandas as the primary reader (handles corrupt custom properties),
+    with patched openpyxl and calamine as fallbacks.
     
     Produces a well-structured text document that preserves:
     - All sheet names
@@ -95,43 +170,24 @@ def excel_to_text(filepath: Path) -> str:
     - Every row of data with labeled columns
     - The original filename for citation purposes
     """
-    try:
-        import openpyxl
-    except ImportError:
-        log.error("openpyxl not installed — cannot convert Excel files")
-        return ""
+    sheets = _read_excel_with_pandas(filepath)
     
-    try:
-        wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
-    except Exception as e:
-        log.error(f"Failed to open Excel file {filepath.name}: {e}")
-        # Try without read_only mode (handles some edge cases)
-        try:
-            wb = openpyxl.load_workbook(filepath, data_only=True, read_only=False)
-        except Exception as e2:
-            log.error(f"Failed to open Excel file {filepath.name} (retry): {e2}")
-            return ""
+    if not sheets:
+        log.error(f"Could not read any sheets from {filepath.name}")
+        return ""
     
     parts = []
     parts.append(f"DOCUMENT: {filepath.name}")
     parts.append(f"TYPE: Excel Spreadsheet")
-    parts.append(f"SHEETS: {', '.join(wb.sheetnames)}")
+    parts.append(f"SHEETS: {', '.join(sheets.keys())}")
     parts.append("=" * 80)
     
     total_rows = 0
     
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
+    for sheet_name, rows in sheets.items():
         parts.append(f"\n{'=' * 80}")
         parts.append(f"SHEET: {sheet_name}")
         parts.append(f"{'=' * 80}\n")
-        
-        try:
-            rows = list(ws.iter_rows(values_only=True))
-        except Exception as e:
-            log.warning(f"Error reading sheet '{sheet_name}' in {filepath.name}: {e}")
-            parts.append(f"[Error reading this sheet: {e}]")
-            continue
         
         if not rows:
             parts.append("[Empty sheet]")
@@ -163,7 +219,6 @@ def excel_to_text(filepath: Path) -> str:
                 continue
             
             # Format as labeled columns for better semantic search
-            # e.g., "Column1: value1 | Column2: value2 | ..."
             labeled_parts = []
             for j, cell in enumerate(cells):
                 if j < len(headers) and headers[j]:
@@ -177,11 +232,6 @@ def excel_to_text(filepath: Path) -> str:
         
         parts.append(f"\n[Sheet '{sheet_name}': {sheet_rows} data rows]")
         total_rows += sheet_rows
-    
-    try:
-        wb.close()
-    except Exception:
-        pass
     
     parts.append(f"\n{'=' * 80}")
     parts.append(f"END OF DOCUMENT: {filepath.name}")
