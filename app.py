@@ -279,7 +279,14 @@ def _task_key(project_id: str, pool: str) -> str:
 # ── Sync logic ───────────────────────────────────────────────────────────────
 
 def sync_pool(project_id: str, pool: str, rebuild: bool = False):
-    """Upload new/changed files to OpenAI vector store for a project pool."""
+    """Upload new/changed files to OpenAI vector store for a project pool.
+    
+    Sync logic:
+    - Rebuild=True: deletes everything and re-indexes all files from scratch
+    - Rebuild=False (Sync): only uploads files that are new or changed
+      * For Excel files: also re-uploads if they were indexed with old code
+        (detected by checking for 'excel_converted' flag in metadata)
+    """
     key = _task_key(project_id, pool)
     try:
         _tasks[key] = {"status": "running", "progress": "Starting...", "result": None}
@@ -291,6 +298,32 @@ def sync_pool(project_id: str, pool: str, rebuild: bool = False):
 
         # Ensure vector store
         _tasks[key]["progress"] = "Preparing vector store..."
+
+        # Check if the existing vector store is still valid
+        vs_id = pool_meta.get("vector_store_id", "")
+        vs_is_valid = False
+        if vs_id:
+            try:
+                client.vector_stores.retrieve(vs_id)
+                vs_is_valid = True
+            except Exception:
+                log.warning(f"Vector store {vs_id} no longer exists — will recreate")
+                vs_is_valid = False
+
+        # If vector store is gone, treat as rebuild (all files need re-upload)
+        if not vs_is_valid and not rebuild:
+            log.info("Vector store missing — forcing full re-upload")
+            pool_meta["vector_store_id"] = ""
+            pool_meta["files"] = {}
+            old_asst = pool_meta.get("assistant_id", "")
+            if old_asst:
+                try:
+                    client.beta.assistants.delete(old_asst)
+                except Exception:
+                    pass
+            pool_meta["assistant_id"] = ""
+            save_meta(project_dir, meta)
+
         if rebuild:
             # Delete old vector store and create new one
             old_vs = pool_meta.get("vector_store_id", "")
@@ -323,32 +356,56 @@ def sync_pool(project_id: str, pool: str, rebuild: bool = False):
 
         log_entries = []
         uploaded_count = 0
+        skipped_count = 0
 
-        # Upload new files
+        # Determine which files need uploading
         for fname, fpath in sorted(local_files.items()):
-            if not rebuild and fname in existing_files:
-                # Check if file size changed
-                current_size = fpath.stat().st_size
-                if existing_files[fname].get("size") == current_size:
-                    continue
+            needs_upload = False
+            reason = ""
 
-            _tasks[key]["progress"] = f"Uploading: {fname}"
-            log.info(f"Uploading {fname} to OpenAI...")
+            if fname not in existing_files:
+                # Brand new file — never indexed
+                needs_upload = True
+                reason = "new file"
+            elif existing_files[fname].get("size") != fpath.stat().st_size:
+                # File size changed on disk
+                needs_upload = True
+                reason = "file changed"
+            elif fname.lower().endswith((".xlsx", ".xls")) and not existing_files[fname].get("excel_converted"):
+                # Excel file was indexed with OLD code (before conversion fix)
+                # It needs to be re-uploaded with proper text conversion
+                needs_upload = True
+                reason = "excel needs conversion"
+                # Delete the old (broken) file from OpenAI
+                old_fid = existing_files[fname].get("openai_file_id", "")
+                if old_fid:
+                    try:
+                        client.files.delete(old_fid)
+                    except Exception:
+                        pass
+            else:
+                # File is in metadata with same size — already indexed
+                skipped_count += 1
+                continue
+
+            _tasks[key]["progress"] = f"Uploading ({reason}): {fname}"
+            log.info(f"Uploading {fname} to OpenAI ({reason})...")
 
             try:
-                # For Excel files, convert to text first (OpenAI File Search doesn't support .xlsx)
+                # For Excel files, convert to text first (OpenAI doesn't support .xlsx)
                 if fname.lower().endswith((".xlsx", ".xls")):
                     log.info(f"Converting Excel file to text: {fname}")
                     _tasks[key]["progress"] = f"Converting Excel: {fname}"
                     text_content = excel_to_text(fpath)
-                    if not text_content.strip():
+                    if not text_content or not text_content.strip():
                         log_entries.append(f"Skipped (empty Excel): {fname}")
                         log.warning(f"Excel file {fname} produced empty text — skipping")
                         continue
                     
-                    # Create a clean .txt filename: report.xlsx → report_xlsx.txt
-                    clean_name = fname.rsplit(".", 1)[0] + "_" + fname.rsplit(".", 1)[1] + ".txt"
-                    log.info(f"Excel {fname} converted: {len(text_content)} chars → uploading as {clean_name}")
+                    # Create a clean .txt filename: report.xlsx -> report_xlsx.txt
+                    base, ext_part = fname.rsplit(".", 1)
+                    clean_name = f"{base}_{ext_part}.txt"
+                    log.info(f"Excel {fname} converted: {len(text_content)} chars -> uploading as {clean_name}")
                     
                     # Write to temp file with clean name
                     tmp_dir = tempfile.mkdtemp()
@@ -376,29 +433,38 @@ def sync_pool(project_id: str, pool: str, rebuild: bool = False):
                 # Add to vector store
                 _tasks[key]["progress"] = f"Indexing: {fname}"
                 log.info(f"Adding {fname} to vector store {vs_id}...")
-                result = client.vector_stores.files.create_and_poll(
+                vs_result = client.vector_stores.files.create_and_poll(
                     vector_store_id=vs_id, file_id=oai_file.id
                 )
                 
                 # Check if indexing was successful
-                if hasattr(result, 'status') and result.status == 'failed':
-                    error_msg = getattr(result, 'last_error', 'Unknown error')
+                if hasattr(vs_result, 'status') and vs_result.status == 'failed':
+                    error_msg = getattr(vs_result, 'last_error', 'Unknown error')
                     log_entries.append(f"Index FAILED: {fname} — {error_msg}")
                     log.error(f"Vector store indexing failed for {fname}: {error_msg}")
+                    # Do NOT save to metadata so it gets retried next sync
                     continue
 
-                existing_files[fname] = {
+                file_meta = {
                     "openai_file_id": oai_file.id,
                     "size": fpath.stat().st_size,
                 }
+                # Mark Excel files as properly converted so we don't re-upload next time
+                if fname.lower().endswith((".xlsx", ".xls")):
+                    file_meta["excel_converted"] = True
+                
+                existing_files[fname] = file_meta
                 uploaded_count += 1
-                file_type = "Excel→Text" if fname.lower().endswith((".xlsx", ".xls")) else "PDF"
+                file_type = "Excel->Text" if fname.lower().endswith((".xlsx", ".xls")) else "PDF"
                 log_entries.append(f"Indexed ({file_type}): {fname}")
                 log.info(f"Successfully indexed {fname} ({file_type})")
 
             except Exception as e:
                 log_entries.append(f"Error uploading {fname}: {str(e)}")
                 log.error(f"Error uploading {fname}: {e}", exc_info=True)
+                # Remove from metadata so it gets retried next sync
+                if fname in existing_files:
+                    del existing_files[fname]
 
         # Remove files that no longer exist locally
         removed = []
@@ -423,11 +489,12 @@ def sync_pool(project_id: str, pool: str, rebuild: bool = False):
         result = {
             "files": len(existing_files),
             "uploaded": uploaded_count,
+            "skipped": skipped_count,
             "removed": len(removed),
             "log": log_entries,
         }
         _tasks[key] = {"status": "done", "progress": "Complete", "result": result}
-        log.info(f"Sync complete for {project_id}/{pool}: {len(existing_files)} files, {uploaded_count} new")
+        log.info(f"Sync complete for {project_id}/{pool}: {len(existing_files)} total, {uploaded_count} new, {skipped_count} already indexed")
 
     except Exception as e:
         log.error(f"Sync error: {e}", exc_info=True)
